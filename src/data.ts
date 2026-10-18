@@ -110,7 +110,7 @@ export function formatSize(size?: number): string {
 }
 
 export function fileType(entry: Entry): string {
-  if (entry.kind === 'directory') return '\u6587\u4ef6\u5939';
+  if (entry.kind === 'directory') return '文件夹';
   const extension = entry.name.split('.').pop()?.toUpperCase();
-  return extension && extension !== entry.name.toUpperCase() ? `${extension} \u6587\u4ef6` : '\u6587\u4ef6';
+  return extension && extension !== entry.name.toUpperCase() ? `${extension} 文件` : '文件';
 }
