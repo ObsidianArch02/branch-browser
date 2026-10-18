@@ -1,6 +1,6 @@
 import type { Entry, FileTree, ReadonlyDirectoryHandle } from './types';
 
-const pendingReads = new WeakMap<ReadonlyDirectoryHandle, Promise<void>>();
+const pendingReads = new WeakMap<ReadonlyDirectoryHandle, Promise<FileTree>>();
 
 let nextId = 0;
 /** Allocate an opaque entry id. Ids are pure identifiers and never encode the entry's path. */
@@ -8,34 +8,55 @@ export function allocateId(): string {
   return `e${nextId++}`;
 }
 
-export async function loadDirectory(tree: FileTree, id: string): Promise<void> {
+/**
+ * Ensure a directory's children are loaded. Resolves to a new FileTree whose
+ * entries map contains the loaded children; the input tree is never mutated.
+ * Concurrent calls for the same directory share one read and resolve to the
+ * same updated tree. If a caller's tree is stale, its own fresh copy is built.
+ */
+export function loadDirectory(tree: FileTree, id: string): Promise<FileTree> {
   const entry = tree.entries.get(id);
-  if (!entry || entry.kind !== 'directory' || entry.children !== undefined) return;
+  if (!entry || entry.kind !== 'directory' || entry.children !== undefined) return Promise.resolve(tree);
   const handle = entry.handle;
-  if (!handle || handle.kind !== 'directory') return;
+  if (!handle || handle.kind !== 'directory') return Promise.resolve(tree);
+
   const pending = pendingReads.get(handle);
-  if (pending) return pending;
-  const read = (async () => {
+  if (pending) return pending.then(loaded => mergeLoaded(tree, loaded, id));
+
+  const read = (async (): Promise<FileTree> => {
     const children: Entry[] = [];
     for await (const child of handle.values()) {
       children.push({ id: allocateId(), name: child.name, kind: child.kind, parentId: id, handle: child });
     }
-    children.forEach(child => tree.entries.set(child.id, child));
-    entry.children = children.map(child => child.id);
+    return mergeLoaded(tree, children, id);
   })();
+
   pendingReads.set(handle, read);
-  try { await read; } finally { pendingReads.delete(handle); }
+  read.finally(() => pendingReads.delete(handle));
+  return read;
+}
+
+/** Apply loaded children (a list or an already-built tree's entries for `id`) onto `tree`, immutably. */
+function mergeLoaded(tree: FileTree, loaded: FileTree | Entry[], id: string): FileTree {
+  const source = Array.isArray(loaded) ? undefined : loaded;
+  const children: Entry[] = Array.isArray(loaded)
+    ? loaded
+    : (source!.entries.get(id)!.children ?? []).map(childId => source!.entries.get(childId)!);
+  const entries = new Map(tree.entries);
+  const base = entries.get(id)!;
+  for (const child of children) entries.set(child.id, child);
+  entries.set(id, { ...base, children: children.map(child => child.id) });
+  return { ...tree, entries };
 }
 
 export async function treeFromHandle(handle: ReadonlyDirectoryHandle): Promise<FileTree> {
   const rootId = allocateId();
   const tree: FileTree = { rootId, entries: new Map([[rootId, { id: rootId, name: handle.name, kind: 'directory', handle }]]) };
-  await loadDirectory(tree, rootId);
-  return tree;
+  return loadDirectory(tree, rootId);
 }
 
 export function treeFromFiles(files: File[]): FileTree {
-  const rootName = files[0]?.webkitRelativePath.split('/')[0] || '\u672c\u5730\u6587\u4ef6\u5939';
+  const rootName = files[0]?.webkitRelativePath.split('/')[0] || '本地文件夹';
   const rootId = allocateId();
   const entries = new Map<string, Entry>([[rootId, { id: rootId, name: rootName, kind: 'directory', children: [] }]]);
   // Key intermediate directories by their path so files sharing a directory land
@@ -61,20 +82,23 @@ export function treeFromFiles(files: File[]): FileTree {
   return { rootId, entries };
 }
 
-export async function readFile(entry: Entry): Promise<File | undefined> {
-  if (entry.file) return entry.file;
+/**
+ * Resolve an entry's underlying File. When the entry gains size/modified
+ * metadata, the result includes a patched `entry` so callers can merge it
+ * immutably. Never mutates the passed entry.
+ */
+export async function readFile(entry: Entry): Promise<{ file?: File; entry?: Entry }> {
+  if (entry.file) return { file: entry.file };
   if (entry.handle?.kind === 'file') {
     const file = await entry.handle.getFile();
-    entry.size = file.size;
-    entry.modified = file.lastModified;
-    return file;
+    return { file, entry: { ...entry, size: file.size, modified: file.lastModified } };
   }
   if (entry.asset) {
     const response = await fetch(entry.asset);
-    if (!response.ok) throw new Error('\u9884\u89c8\u8d44\u6e90\u8bfb\u53d6\u5931\u8d25');
+    if (!response.ok) throw new Error('预览资源读取失败');
     const blob = await response.blob();
-    return new File([blob], entry.name, { type: blob.type });
+    return { file: new File([blob], entry.name, { type: blob.type }) };
   }
-  if (entry.content !== undefined && entry.content !== '') return new File([entry.content], entry.name, { type: 'text/plain' });
-  return undefined;
+  if (entry.content !== undefined && entry.content !== '') return { file: new File([entry.content], entry.name, { type: 'text/plain' }) };
+  return {};
 }

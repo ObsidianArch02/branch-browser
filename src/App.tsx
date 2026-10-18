@@ -11,6 +11,15 @@ const initialSettings: Settings = { previews: true, hidden: true, fontSize: 15, 
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '读取文件夹失败';
 
+/** Merge the entries of a freshly loaded tree into `base`, producing a new FileTree. */
+function mergeTrees(base: FileTree, loaded: FileTree): FileTree {
+  if (loaded === base) return base;
+  const entries = new Map(base.entries);
+  let changed = false;
+  for (const [id, entry] of loaded.entries) if (entries.get(id) !== entry) { entries.set(id, entry); changed = true; }
+  return changed ? { ...base, entries } : base;
+}
+
 function IconButton({ label, children, active, className = '', ...props }: { label: string; children: ReactNode; active?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return <button {...props} type="button" aria-label={label} data-tooltip={label} aria-pressed={active} className={`icon-button ${active ? 'is-active' : ''} ${className}`}>{children}</button>;
 }
@@ -26,25 +35,27 @@ function entryColor(entry: Entry, onPath: boolean, selected: boolean): string {
 
 function Preview({ node, tree, selected, onClose }: { node: PreviewNode; tree: FileTree; selected: boolean; onClose: () => void }) {
   const { entry } = node;
-  const [state, setState] = useState<{ loading: boolean; file?: File; text?: string; url?: string; error?: string; binary?: boolean }>({ loading: true });
+  const [state, setState] = useState<{ loading: boolean; file?: File; text?: string; url?: string; error?: string; binary?: boolean; size?: number; modified?: number }>({ loading: true });
   useEffect(() => {
     let disposed = false;
     let objectUrl: string | undefined;
     setState({ loading: true });
     (async () => {
       try {
-        const file = await readFile(entry);
+        const { file, entry: patched } = await readFile(entry);
         if (disposed) return;
-        if (!file) { setState({ loading: false }); return; }
+        const size = patched?.size;
+        const modified = patched?.modified;
+        if (!file) { setState({ loading: false, size, modified }); return; }
         const media = /^(image|video|audio)\//.test(file.type) || /\.(png|jpe?g|webp|gif|svg|mp4|webm|mp3|wav|m4a|ogg|pdf)$/i.test(entry.name);
         if (media) {
           objectUrl = URL.createObjectURL(file);
-          setState({ loading: false, file, url: objectUrl });
+          setState({ loading: false, file, url: objectUrl, size, modified });
         } else {
           const bytes = await file.slice(0, 512 * 1024).arrayBuffer();
           if (disposed) return;
           const binary = new Uint8Array(bytes).some(byte => byte === 0);
-          setState({ loading: false, file, binary, text: binary ? undefined : new TextDecoder().decode(bytes) });
+          setState({ loading: false, file, binary, text: binary ? undefined : new TextDecoder().decode(bytes), size, modified });
         }
       } catch (error) {
         if (!disposed) setState({ loading: false, error: errorMessage(error) });
@@ -68,7 +79,7 @@ function Preview({ node, tree, selected, onClose }: { node: PreviewNode; tree: F
   const audio = /\.(mp3|wav|m4a|ogg)$/i.test(entry.name) || state.file?.type.startsWith('audio/');
   return <section className="preview" aria-label="文件预览" aria-current={selected ? 'true' : undefined} data-preview-id={entry.id} style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.width, height: node.height }}>
     <header className="preview-toolbar"><FileCode2 size={17} strokeWidth={1.5} /><h2 title={entry.name}>{entry.name}</h2><div className="button-group"><IconButton label="下载文件" disabled={!state.file} onClick={download}><Download size={16} /></IconButton><IconButton label="关闭预览" onClick={onClose}><X size={17} /></IconButton></div></header>
-    <div className="preview-meta"><span>{fileType(entry)}</span><span>{formatSize(state.file?.size ?? entry.size)}</span><time>{entry.modified ? new Date(entry.modified).toLocaleString('zh-CN', { hour12: false }) : '--'}</time></div>
+    <div className="preview-meta"><span>{fileType(entry)}</span><span>{formatSize(state.file?.size ?? state.size ?? entry.size)}</span><time>{(state.modified ?? entry.modified) ? new Date((state.modified ?? entry.modified)!).toLocaleString('zh-CN', { hour12: false }) : '--'}</time></div>
     <div className="preview-content" tabIndex={0} aria-label={`${entry.name} 内容`}>
       {state.loading ? <div className="preview-empty"><LoaderCircle className="spin" size={24} /><span>正在读取</span></div>
         : state.error ? <div className="preview-empty error-text">{state.error}</div>
@@ -97,7 +108,6 @@ export default function App() {
   const [autoCenter, setAutoCenter] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [wheelZooming, setWheelZooming] = useState(false);
-  const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [previewId, setPreviewId] = useState<string>();
   const [query, setQuery] = useState('');
@@ -127,7 +137,7 @@ export default function App() {
   const path = useMemo(() => ancestors(tree.entries, activeId), [tree, activeId]);
   const pathIds = useMemo(() => new Set(path.map(entry => entry.id)), [path]);
   const previewWidth = viewport.width < 700 ? Math.max(280, viewport.width - 68) : 560;
-  const graph = useMemo(() => buildLayout(tree, activeId, settings, descending, previewId ? { id: previewId, width: previewWidth, height: 420 } : undefined), [tree, activeId, settings, revision, descending, previewId, previewWidth]);
+  const graph = useMemo(() => buildLayout(tree, activeId, settings, descending, previewId ? { id: previewId, width: previewWidth, height: 420 } : undefined), [tree, activeId, settings, descending, previewId, previewWidth]);
   const focus = useMemo(() => focusBounds(graph, selectedId), [graph, selectedId]);
   const centeredCamera = useCallback((scale: number): Camera => ({ scale, x: viewport.width / 2 - (focus.x + focus.width / 2) * scale, y: viewport.height / 2 - (focus.y + focus.height / 2) * scale }), [focus, viewport]);
   const currentRows = visibleChildren(tree.entries, active, settings.hidden, descending);
@@ -136,12 +146,12 @@ export default function App() {
     let directories = 0, files = 0;
     for (const entry of tree.entries.values()) if (entry.kind === 'directory') directories++; else files++;
     return { directories, files };
-  }, [tree, revision]);
+  }, [tree]);
   const searchResults = useMemo(() => {
     if (!query.trim()) return [];
     const needle = query.trim().toLocaleLowerCase();
     return [...tree.entries.values()].filter(entry => entry.id !== tree.rootId && (settings.hidden || !ancestors(tree.entries, entry.id).some(item => item.parentId && item.name.startsWith('.'))) && entry.name.toLocaleLowerCase().includes(needle)).sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true })).slice(0, 100);
-  }, [query, tree, revision, settings.hidden]);
+  }, [query, tree, settings.hidden]);
 
   useEffect(() => {
     const element = canvasRef.current;
@@ -156,16 +166,20 @@ export default function App() {
     setBusy(true);
     (async () => {
       try {
-        await loadDirectory(tree, activeId);
+        // Merge each freshly loaded tree into state; entries accumulate immutably.
+        let next = await loadDirectory(tree, activeId);
+        setTree(current => mergeTrees(current, next));
         if (settings.previews) {
-          const children = visibleChildren(tree.entries, tree.entries.get(activeId)!, settings.hidden).filter(entry => entry.kind === 'directory');
+          const children = visibleChildren(next.entries, next.entries.get(activeId)!, settings.hidden).filter(entry => entry.kind === 'directory');
           for (let i = 0; i < children.length; i += 8) {
             if (cancelled) return;
-            await Promise.all(children.slice(i, i + 8).map(entry => loadDirectory(tree, entry.id)));
+            const batch = await Promise.all(children.slice(i, i + 8).map(entry => loadDirectory(next, entry.id)));
+            next = batch.reduce((acc, t) => mergeTrees(acc, t), next);
+            setTree(current => batch.reduce((acc, t) => mergeTrees(acc, t), current));
           }
         }
       } catch (error) { if (!cancelled) setToast(errorMessage(error)); }
-      finally { if (!cancelled) { setBusy(false); setRevision(value => value + 1); } }
+      finally { if (!cancelled) setBusy(false); }
     })();
     return () => { cancelled = true; };
   }, [tree, activeId, settings.previews, settings.hidden]);
@@ -177,13 +191,15 @@ export default function App() {
       setSearching(true);
       const queue = [tree.rootId];
       try {
+        let next = tree;
         while (queue.length && !cancelled) {
           const ids = queue.splice(0, 8);
-          await Promise.all(ids.map(id => loadDirectory(tree, id)));
+          const batch = await Promise.all(ids.map(id => loadDirectory(next, id)));
+          next = batch.reduce((acc, t) => mergeTrees(acc, t), next);
           for (const id of ids) {
-            for (const child of visibleChildren(tree.entries, tree.entries.get(id)!, settings.hidden)) if (child.kind === 'directory') queue.push(child.id);
+            for (const child of visibleChildren(next.entries, next.entries.get(id)!, settings.hidden)) if (child.kind === 'directory') queue.push(child.id);
           }
-          if (!cancelled) setRevision(value => value + 1);
+          if (!cancelled) setTree(current => batch.reduce((acc, t) => mergeTrees(acc, t), current));
         }
       } catch (error) { if (!cancelled) setToast(errorMessage(error)); }
       finally { if (!cancelled) setSearching(false); }

@@ -140,7 +140,7 @@ describe('local directories', () => {
     expect(nestedDir.kind).toBe('directory');
     const imported = tree.entries.get(nestedDir.children![0])!;
     expect(imported.name).toBe(file.name);
-    expect(await (await readFile(imported))?.text()).toBe('hello local files');
+    expect(await (await readFile(imported)).file?.text()).toBe('hello local files');
   });
 
   it('coalesces concurrent native reads without duplicating children', async () => {
@@ -154,11 +154,11 @@ describe('local directories', () => {
       },
     };
     const tree: FileTree = { rootId: 'root', entries: new Map([['root', { id: 'root', name: 'root', kind: 'directory', handle }]]) };
-    await Promise.all([loadDirectory(tree, 'root'), loadDirectory(tree, 'root')]);
+    const [loaded] = await Promise.all([loadDirectory(tree, 'root'), loadDirectory(tree, 'root')]);
     expect(reads).toBe(1);
-    const childIds = tree.entries.get('root')!.children!;
+    const childIds = loaded.entries.get('root')!.children!;
     expect(childIds).toHaveLength(1);
-    expect(tree.entries.get(childIds[0])!.name).toBe('notes.txt');
-    expect(await (await readFile(tree.entries.get(childIds[0])!))?.text()).toBe('notes');
+    expect(loaded.entries.get(childIds[0])!.name).toBe('notes.txt');
+    expect(await (await readFile(loaded.entries.get(childIds[0])!)).file?.text()).toBe('notes');
   });
 });
