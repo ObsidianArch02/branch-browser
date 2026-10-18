@@ -32,7 +32,7 @@ export function loadDirectory(tree: FileTree, id: string): Promise<FileTree> {
   })();
 
   pendingReads.set(handle, read);
-  read.finally(() => pendingReads.delete(handle));
+  read.finally(() => pendingReads.delete(handle)).catch(() => undefined);
   return read;
 }
 
@@ -56,7 +56,7 @@ export async function treeFromHandle(handle: ReadonlyDirectoryHandle): Promise<F
 }
 
 export function treeFromFiles(files: File[]): FileTree {
-  const rootName = files[0]?.webkitRelativePath.split('/')[0] || '本地文件夹';
+  const rootName = files[0]?.webkitRelativePath?.split('/')[0] || '本地文件夹';
   const rootId = allocateId();
   const entries = new Map<string, Entry>([[rootId, { id: rootId, name: rootName, kind: 'directory', children: [] }]]);
   // Key intermediate directories by their path so files sharing a directory land

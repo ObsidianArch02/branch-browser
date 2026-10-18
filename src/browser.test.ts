@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDemo, DEMO_FOCUS, entryAtPath, visibleChildren } from './data';
 import { loadDirectory, readFile, treeFromFiles } from './filesystem';
+import { initialNavigation, navigationReducer } from './navigation';
 import { buildLayout, focusBounds } from './layout';
 import type { FileTree, ReadonlyDirectoryHandle } from './types';
 
@@ -160,5 +161,91 @@ describe('local directories', () => {
     expect(childIds).toHaveLength(1);
     expect(loaded.entries.get(childIds[0])!.name).toBe('notes.txt');
     expect(await (await readFile(loaded.entries.get(childIds[0])!)).file?.text()).toBe('notes');
+    // The input tree is left untouched by the immutable load.
+    expect(tree.entries.get('root')!.children).toBeUndefined();
+  });
+
+  it('propagates a rejected directory read and leaves the directory unloaded', async () => {
+    const handle: ReadonlyDirectoryHandle = {
+      kind: 'directory', name: 'root',
+      // eslint-disable-next-line require-await
+      async *values() { throw new Error('denied'); },
+    };
+    const tree: FileTree = { rootId: 'root', entries: new Map([['root', { id: 'root', name: 'root', kind: 'directory', handle }]]) };
+    await expect(loadDirectory(tree, 'root')).rejects.toThrow('denied');
+    // The directory is still considered unloaded and the read is retried on the next call.
+    expect(tree.entries.get('root')!.children).toBeUndefined();
+    await expect(loadDirectory(tree, 'root')).rejects.toThrow('denied');
+  });
+
+  it('imports a file without a webkitRelativePath under a default folder name', () => {
+    const file = new File(['data'], 'loose.txt', { type: 'text/plain' });
+    const tree = treeFromFiles([file]);
+    const root = tree.entries.get(tree.rootId)!;
+    expect(root.name).toBe('本地文件夹');
+    expect(root.children).toHaveLength(1);
+    const entry = tree.entries.get(root.children![0])!;
+    expect(entry.name).toBe('loose.txt');
+    expect(entry.kind).toBe('file');
+  });
+
+  it('never collides entry ids for names that would collide under a path scheme', () => {
+    const literal = new File(['x'], 'a/b', { type: 'text/plain' });
+    Object.defineProperty(literal, 'webkitRelativePath', { value: 'root/a/b' });
+    const nestedA = new File(['y'], 'b', { type: 'text/plain' });
+    Object.defineProperty(nestedA, 'webkitRelativePath', { value: 'root/nested/b' });
+    const tree = treeFromFiles([literal, nestedA]);
+    const ids = [...tree.entries.keys()];
+    expect(new Set(ids).size).toBe(ids.length);
+    // Both files named "b" (one literally "a/b") exist as distinct entries.
+    const bs = [...tree.entries.values()].filter(e => e.name === 'b');
+    expect(bs).toHaveLength(2);
+    expect(bs[0].id).not.toBe(bs[1].id);
+  });
+});
+
+describe('navigation reducer', () => {
+  const hidden = true;
+  const descending = false;
+  function setup() {
+    const tree = createDemo();
+    const state = initialNavigation(tree, DEMO_FOCUS, `${DEMO_FOCUS}/02 Moria`);
+    return { tree, state };
+  }
+
+  it('navigates into a directory, records history, and selects its first child', () => {
+    const { tree, state } = setup();
+    const moria = entryAtPath(tree, `${DEMO_FOCUS}/02 Moria`)!;
+    const next = navigationReducer(state, { type: 'navigate', tree, id: moria.id, hidden, descending });
+    expect(next.activeId).toBe(moria.id);
+    expect(next.previewId).toBeUndefined();
+    expect(next.history.items[next.history.index]).toBe(moria.id);
+    const first = visibleChildren(tree.entries, moria, hidden, descending)[0];
+    expect(next.selectedId).toBe(first.id);
+  });
+
+  it('walks history back and forward without pushing duplicate entries', () => {
+    const { tree, state } = setup();
+    const moria = entryAtPath(tree, `${DEMO_FOCUS}/02 Moria`)!;
+    let s = navigationReducer(state, { type: 'navigate', tree, id: moria.id, hidden, descending });
+    s = navigationReducer(s, { type: 'history', delta: -1, tree, hidden, descending });
+    expect(s.activeId).toBe(state.activeId);
+    expect(s.history.index).toBe(0);
+    s = navigationReducer(s, { type: 'history', delta: 1, tree, hidden, descending });
+    expect(s.activeId).toBe(moria.id);
+    expect(s.history.index).toBe(1);
+    expect(s.history.items).toHaveLength(2);
+  });
+
+  it('clears the preview when selecting a directory while a preview is open', () => {
+    const { tree, state } = setup();
+    const moria = entryAtPath(tree, `${DEMO_FOCUS}/02 Moria`)!;
+    const file = visibleChildren(tree.entries, moria, hidden, descending).find(e => e.kind === 'file')!;
+    const dir = visibleChildren(tree.entries, moria, hidden, descending).find(e => e.kind === 'directory')!;
+    let s = navigationReducer(state, { type: 'preview', id: file.id });
+    expect(s.previewId).toBe(file.id);
+    s = navigationReducer(s, { type: 'select', id: dir.id, kind: 'directory' });
+    expect(s.previewId).toBeUndefined();
+    expect(s.selectedId).toBe(dir.id);
   });
 });
