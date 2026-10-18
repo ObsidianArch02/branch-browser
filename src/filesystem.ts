@@ -26,7 +26,7 @@ export function loadDirectory(tree: FileTree, id: string): Promise<FileTree> {
   const read = (async (): Promise<FileTree> => {
     const children: Entry[] = [];
     for await (const child of handle.values()) {
-      children.push({ id: allocateId(), name: child.name, kind: child.kind, parentId: id, handle: child });
+      children.push({ id: allocateId(), name: child.name, searchName: child.name.toLocaleLowerCase(), kind: child.kind, parentId: id, handle: child });
     }
     return mergeLoaded(tree, children, id);
   })();
@@ -72,7 +72,7 @@ export function treeFromFiles(files: File[]): FileTree {
       let id = isFile ? undefined : directories.get(pathKey);
       if (!id) {
         id = allocateId();
-        entries.set(id, { id, name, parentId, kind: isFile ? 'file' : 'directory', children: isFile ? undefined : [], file: isFile ? file : undefined, size: isFile ? file.size : undefined, modified: isFile ? file.lastModified : undefined });
+        entries.set(id, { id, name, searchName: name.toLocaleLowerCase(), parentId, kind: isFile ? 'file' : 'directory', children: isFile ? undefined : [], file: isFile ? file : undefined, size: isFile ? file.size : undefined, modified: isFile ? file.lastModified : undefined });
         entries.get(parentId)!.children!.push(id);
         if (!isFile) directories.set(pathKey, id);
       }

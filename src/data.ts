@@ -64,7 +64,7 @@ export function createDemo(): FileTree {
   const entries: Entries = new Map();
   function add(node: Seed, parentId?: string): string {
     const id = allocateId();
-    const entry: Entry = { id, name: node.name, kind: node.children ? 'directory' : 'file', parentId, content: node.content, asset: node.asset, size: node.content ? new TextEncoder().encode(node.content).length : undefined, modified: Date.parse('2026-09-29T09:00:00Z') };
+    const entry: Entry = { id, name: node.name, searchName: node.name.toLocaleLowerCase(), kind: node.children ? 'directory' : 'file', parentId, content: node.content, asset: node.asset, size: node.content ? new TextEncoder().encode(node.content).length : undefined, modified: Date.parse('2026-09-29T09:00:00Z') };
     entries.set(id, entry);
     if (node.children) entry.children = node.children.map(child => add(child, id));
     return id;

@@ -17,6 +17,8 @@ export interface Entry {
   kind: 'directory' | 'file';
   parentId?: string;
   children?: string[];
+  /** Lowercased name, cached for search filtering. */
+  searchName?: string;
   handle?: ReadonlyDirectoryHandle | ReadonlyFileHandle;
   file?: File;
   content?: string;

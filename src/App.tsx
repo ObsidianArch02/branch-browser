@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ArrowDownAZ, ArrowLeft, ArrowRight, Check, ChevronRight, Database, Download, Eye, EyeOff, File, FileCode2, Folder, FolderOpen, GitBranch, List, LoaderCircle, Maximize, Minus, Network, Plus, Search, Settings2, X } from 'lucide-react';
 import { ancestors, createDemo, DEMO_FOCUS, entryAtPath, fileType, formatSize, visibleChildren } from './data';
@@ -147,11 +147,13 @@ export default function App() {
     for (const entry of tree.entries.values()) if (entry.kind === 'directory') directories++; else files++;
     return { directories, files };
   }, [tree]);
+  // Defer the query so typing stays responsive while results are recomputed.
+  const deferredQuery = useDeferredValue(query);
   const searchResults = useMemo(() => {
-    if (!query.trim()) return [];
-    const needle = query.trim().toLocaleLowerCase();
-    return [...tree.entries.values()].filter(entry => entry.id !== tree.rootId && (settings.hidden || !ancestors(tree.entries, entry.id).some(item => item.parentId && item.name.startsWith('.'))) && entry.name.toLocaleLowerCase().includes(needle)).sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true })).slice(0, 100);
-  }, [query, tree, settings.hidden]);
+    if (!deferredQuery.trim()) return [];
+    const needle = deferredQuery.trim().toLocaleLowerCase();
+    return [...tree.entries.values()].filter(entry => entry.id !== tree.rootId && (settings.hidden || !ancestors(tree.entries, entry.id).some(item => item.parentId && item.name.startsWith('.'))) && (entry.searchName ?? entry.name.toLocaleLowerCase()).includes(needle)).sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true })).slice(0, 100);
+  }, [deferredQuery, tree, settings.hidden]);
 
   useEffect(() => {
     const element = canvasRef.current;
