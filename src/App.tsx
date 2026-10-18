@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ArrowDownAZ, ArrowLeft, ArrowRight, Check, ChevronRight, Database, Download, Eye, EyeOff, File, FileCode2, Folder, FolderOpen, GitBranch, List, LoaderCircle, Maximize, Minus, Network, Plus, Search, Settings2, X } from 'lucide-react';
 import { ancestors, createDemo, DEMO_FOCUS, entryAtPath, fileType, formatSize, visibleChildren } from './data';
 import { loadDirectory, readFile, treeFromFiles, treeFromHandle } from './filesystem';
+import { initialNavigation, navigationReducer } from './navigation';
 import { buildLayout, focusBounds } from './layout';
 import type { PreviewNode } from './layout';
 import type { Camera, Entry, FileTree, Point, Settings } from './types';
@@ -96,20 +97,19 @@ function Preview({ node, tree, selected, onClose }: { node: PreviewNode; tree: F
 
 export default function App() {
   const [tree, setTree] = useState<FileTree>(createDemo);
-  const [activeId, setActiveId] = useState(() => entryAtPath(tree, DEMO_FOCUS)!.id);
-  const [selectedId, setSelectedId] = useState(() => entryAtPath(tree, `${DEMO_FOCUS}/02 Moria`)!.id);
+  const [nav, dispatch] = useReducer(navigationReducer, tree, t => initialNavigation(t, DEMO_FOCUS, `${DEMO_FOCUS}/02 Moria`));
+  const { activeId, selectedId, previewId, history: navigation } = nav;
   const [settings, setSettings] = useState(initialSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<'graph' | 'list'>('graph');
   const [descending, setDescending] = useState(false);
-  const [navigation, setNavigation] = useState(() => ({ items: [entryAtPath(tree, DEMO_FOCUS)!.id], index: 0 }));
+
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, scale: 1 });
   const [viewport, setViewport] = useState({ width: 1200, height: 760 });
   const [autoCenter, setAutoCenter] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [wheelZooming, setWheelZooming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [previewId, setPreviewId] = useState<string>();
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchIndex, setSearchIndex] = useState(0);
@@ -259,35 +259,34 @@ export default function App() {
     const entry = tree.entries.get(id);
     if (!entry || entry.kind !== 'directory') return;
     cancelSelection();
-    setActiveId(id);
-    setSelectedId(visibleChildren(tree.entries, entry, settings.hidden, descending)[0]?.id ?? id);
-    setPreviewId(undefined);
+    dispatch({ type: 'navigate', tree, id, hidden: settings.hidden, descending, addHistory });
     setAutoCenter(true);
     setSearchOpen(false);
     setQuery('');
-    if (addHistory) setNavigation(old => old.items[old.index] === id ? old : { items: [...old.items.slice(0, old.index + 1), id], index: old.index + 1 });
   }, [tree, settings.hidden, descending, cancelSelection]);
 
   useEffect(() => {
     if (settings.hidden) return;
     const hiddenAncestor = path.findIndex(entry => entry.parentId && entry.name.startsWith('.'));
     if (hiddenAncestor > 0) navigate(path[hiddenAncestor - 1].id);
-    else if (selected?.name.startsWith('.') && selected.parentId === activeId) setSelectedId(currentRows[0]?.id ?? activeId);
-    if (previewId && ancestors(tree.entries, previewId).some(entry => entry.parentId && entry.name.startsWith('.'))) setPreviewId(undefined);
+    else if (selected?.name.startsWith('.') && selected.parentId === activeId) { const id = currentRows[0]?.id ?? activeId; dispatch({ type: 'select', id, kind: tree.entries.get(id)?.kind ?? 'directory' }); }
+    if (previewId && ancestors(tree.entries, previewId).some(entry => entry.parentId && entry.name.startsWith('.'))) dispatch({ type: 'close-preview' });
   }, [settings.hidden]);
 
   function goHistory(delta: number) {
     const index = navigation.index + delta;
     if (index < 0 || index >= navigation.items.length) return;
-    navigate(navigation.items[index], false);
-    setNavigation(old => ({ ...old, index }));
+    cancelSelection();
+    dispatch({ type: 'history', delta, tree, hidden: settings.hidden, descending });
+    setAutoCenter(true);
+    setSearchOpen(false);
+    setQuery('');
   }
 
   function selectEntry(entry: Entry) {
     cancelSelection();
-    setSelectedId(entry.id);
+    dispatch({ type: 'select', id: entry.id, kind: entry.kind });
     setAutoCenter(false);
-    if (previewId) setPreviewId(entry.kind === 'file' ? entry.id : undefined);
   }
 
   function clickFile(entry: Entry, clickCount: number) {
@@ -299,8 +298,7 @@ export default function App() {
 
   function showPreview(entry: Entry) {
     cancelSelection();
-    setSelectedId(entry.id);
-    setPreviewId(entry.id);
+    dispatch({ type: 'preview', id: entry.id });
     setView('graph');
     setAutoCenter(false);
     canvasRef.current?.focus({ preventScroll: true });
@@ -308,7 +306,7 @@ export default function App() {
 
   function closePreview() {
     cancelSelection();
-    setPreviewId(undefined);
+    dispatch({ type: 'close-preview' });
     setAutoCenter(false);
     canvasRef.current?.focus({ preventScroll: true });
   }
@@ -394,10 +392,7 @@ export default function App() {
 
   async function installTree(nextTree: FileTree) {
     setTree(nextTree);
-    setActiveId(nextTree.rootId);
-    setSelectedId(visibleChildren(nextTree.entries, nextTree.entries.get(nextTree.rootId)!, settings.hidden, descending)[0]?.id ?? nextTree.rootId);
-    setNavigation({ items: [nextTree.rootId], index: 0 });
-    setPreviewId(undefined);
+    dispatch({ type: 'install', tree: nextTree, focusId: nextTree.rootId, hidden: settings.hidden, descending });
     setQuery('');
     setAutoCenter(true);
   }
@@ -428,9 +423,9 @@ export default function App() {
     const next = createDemo();
     const focusId = entryAtPath(next, DEMO_FOCUS)!.id;
     const selectId = entryAtPath(next, `${DEMO_FOCUS}/02 Moria`)!.id;
-    setTree(next); setActiveId(focusId); setSelectedId(selectId);
-    setNavigation({ items: [focusId], index: 0 });
-    setPreviewId(undefined); setQuery(''); setAutoCenter(true);
+    setTree(next);
+    dispatch({ type: 'install', tree: next, focusId, selectedId: selectId, hidden: settings.hidden, descending });
+    setQuery(''); setAutoCenter(true);
   }
 
   function pointerDown(event: ReactPointerEvent<HTMLDivElement>) {
