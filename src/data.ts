@@ -1,3 +1,4 @@
+import { allocateId } from './filesystem';
 import type { Entries, Entry, FileTree } from './types';
 
 type Seed = { name: string; children?: Seed[]; content?: string; asset?: string };
@@ -62,16 +63,29 @@ const seed = dir('Users', [
 export function createDemo(): FileTree {
   const entries: Entries = new Map();
   function add(node: Seed, parentId?: string): string {
-    const id = parentId ? `${parentId}/${node.name}` : node.name;
+    const id = allocateId();
     const entry: Entry = { id, name: node.name, kind: node.children ? 'directory' : 'file', parentId, content: node.content, asset: node.asset, size: node.content ? new TextEncoder().encode(node.content).length : undefined, modified: Date.parse('2026-09-29T09:00:00Z') };
     entries.set(id, entry);
     if (node.children) entry.children = node.children.map(child => add(child, id));
     return id;
   }
-  return { rootId: add(seed), entries };
+  return { rootId: add(seed), entries, demo: true };
 }
 
+/** Path (by entry names, starting at the root) of the directory the demo opens on. */
 export const DEMO_FOCUS = 'Users/drcode/file-browser/test-folders';
+
+/** Resolve a slash-separated path of entry names to an entry, starting at the tree root. */
+export function entryAtPath(tree: FileTree, path: string): Entry | undefined {
+  const names = path.split('/');
+  let entry = tree.entries.get(tree.rootId);
+  if (!entry || entry.name !== names[0]) return undefined;
+  for (const name of names.slice(1)) {
+    entry = entry.children?.map(id => tree.entries.get(id)).find((child): child is Entry => child?.name === name);
+    if (!entry) return undefined;
+  }
+  return entry;
+}
 
 export function ancestors(entries: Entries, id: string): Entry[] {
   const path: Entry[] = [];

@@ -2,6 +2,12 @@ import type { Entry, FileTree, ReadonlyDirectoryHandle } from './types';
 
 const pendingReads = new WeakMap<ReadonlyDirectoryHandle, Promise<void>>();
 
+let nextId = 0;
+/** Allocate an opaque entry id. Ids are pure identifiers and never encode the entry's path. */
+export function allocateId(): string {
+  return `e${nextId++}`;
+}
+
 export async function loadDirectory(tree: FileTree, id: string): Promise<void> {
   const entry = tree.entries.get(id);
   if (!entry || entry.kind !== 'directory' || entry.children !== undefined) return;
@@ -12,7 +18,7 @@ export async function loadDirectory(tree: FileTree, id: string): Promise<void> {
   const read = (async () => {
     const children: Entry[] = [];
     for await (const child of handle.values()) {
-      children.push({ id: `${id}/${child.name}`, name: child.name, kind: child.kind, parentId: id, handle: child });
+      children.push({ id: allocateId(), name: child.name, kind: child.kind, parentId: id, handle: child });
     }
     children.forEach(child => tree.entries.set(child.id, child));
     entry.children = children.map(child => child.id);
@@ -22,7 +28,7 @@ export async function loadDirectory(tree: FileTree, id: string): Promise<void> {
 }
 
 export async function treeFromHandle(handle: ReadonlyDirectoryHandle): Promise<FileTree> {
-  const rootId = `local/${handle.name}`;
+  const rootId = allocateId();
   const tree: FileTree = { rootId, entries: new Map([[rootId, { id: rootId, name: handle.name, kind: 'directory', handle }]]) };
   await loadDirectory(tree, rootId);
   return tree;
@@ -30,17 +36,24 @@ export async function treeFromHandle(handle: ReadonlyDirectoryHandle): Promise<F
 
 export function treeFromFiles(files: File[]): FileTree {
   const rootName = files[0]?.webkitRelativePath.split('/')[0] || '\u672c\u5730\u6587\u4ef6\u5939';
-  const rootId = `local/${rootName}`;
+  const rootId = allocateId();
   const entries = new Map<string, Entry>([[rootId, { id: rootId, name: rootName, kind: 'directory', children: [] }]]);
+  // Key intermediate directories by their path so files sharing a directory land
+  // under the same node; the actual entry ids stay opaque.
+  const directories = new Map<string, string>([['', rootId]]);
   for (const file of files) {
     const components = (file.webkitRelativePath || `${rootName}/${file.name}`).split('/').slice(1);
     let parentId = rootId;
+    let pathKey = '';
     components.forEach((name, index) => {
-      const id = `${parentId}/${name}`;
-      if (!entries.has(id)) {
-        const isFile = index === components.length - 1;
+      pathKey = pathKey ? `${pathKey}/${name}` : name;
+      const isFile = index === components.length - 1;
+      let id = isFile ? undefined : directories.get(pathKey);
+      if (!id) {
+        id = allocateId();
         entries.set(id, { id, name, parentId, kind: isFile ? 'file' : 'directory', children: isFile ? undefined : [], file: isFile ? file : undefined, size: isFile ? file.size : undefined, modified: isFile ? file.lastModified : undefined });
         entries.get(parentId)!.children!.push(id);
+        if (!isFile) directories.set(pathKey, id);
       }
       parentId = id;
     });

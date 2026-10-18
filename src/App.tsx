@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ArrowDownAZ, ArrowLeft, ArrowRight, Check, ChevronRight, Database, Download, Eye, EyeOff, File, FileCode2, Folder, FolderOpen, GitBranch, List, LoaderCircle, Maximize, Minus, Network, Plus, Search, Settings2, X } from 'lucide-react';
-import { ancestors, createDemo, DEMO_FOCUS, fileType, formatSize, visibleChildren } from './data';
+import { ancestors, createDemo, DEMO_FOCUS, entryAtPath, fileType, formatSize, visibleChildren } from './data';
 import { loadDirectory, readFile, treeFromFiles, treeFromHandle } from './filesystem';
 import { buildLayout, focusBounds } from './layout';
 import type { PreviewNode } from './layout';
@@ -85,13 +85,13 @@ function Preview({ node, tree, selected, onClose }: { node: PreviewNode; tree: F
 
 export default function App() {
   const [tree, setTree] = useState<FileTree>(createDemo);
-  const [activeId, setActiveId] = useState(DEMO_FOCUS);
-  const [selectedId, setSelectedId] = useState(`${DEMO_FOCUS}/02 Moria`);
+  const [activeId, setActiveId] = useState(() => entryAtPath(tree, DEMO_FOCUS)!.id);
+  const [selectedId, setSelectedId] = useState(() => entryAtPath(tree, `${DEMO_FOCUS}/02 Moria`)!.id);
   const [settings, setSettings] = useState(initialSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<'graph' | 'list'>('graph');
   const [descending, setDescending] = useState(false);
-  const [navigation, setNavigation] = useState({ items: [DEMO_FOCUS], index: 0 });
+  const [navigation, setNavigation] = useState(() => ({ items: [entryAtPath(tree, DEMO_FOCUS)!.id], index: 0 }));
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, scale: 1 });
   const [viewport, setViewport] = useState({ width: 1200, height: 760 });
   const [autoCenter, setAutoCenter] = useState(true);
@@ -131,7 +131,7 @@ export default function App() {
   const focus = useMemo(() => focusBounds(graph, selectedId), [graph, selectedId]);
   const centeredCamera = useCallback((scale: number): Camera => ({ scale, x: viewport.width / 2 - (focus.x + focus.width / 2) * scale, y: viewport.height / 2 - (focus.y + focus.height / 2) * scale }), [focus, viewport]);
   const currentRows = visibleChildren(tree.entries, active, settings.hidden, descending);
-  const isDemo = tree.rootId === 'Users';
+  const isDemo = tree.demo === true;
   const counts = useMemo(() => {
     let directories = 0, files = 0;
     for (const entry of tree.entries.values()) if (entry.kind === 'directory') directories++; else files++;
@@ -410,8 +410,10 @@ export default function App() {
   function resetDemo() {
     importVersion.current++;
     const next = createDemo();
-    setTree(next); setActiveId(DEMO_FOCUS); setSelectedId(`${DEMO_FOCUS}/02 Moria`);
-    setNavigation({ items: [DEMO_FOCUS], index: 0 });
+    const focusId = entryAtPath(next, DEMO_FOCUS)!.id;
+    const selectId = entryAtPath(next, `${DEMO_FOCUS}/02 Moria`)!.id;
+    setTree(next); setActiveId(focusId); setSelectedId(selectId);
+    setNavigation({ items: [focusId], index: 0 });
     setPreviewId(undefined); setQuery(''); setAutoCenter(true);
   }
 

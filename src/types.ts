@@ -11,6 +11,7 @@ export interface ReadonlyFileHandle {
 }
 
 export interface Entry {
+  /** Opaque identifier: unique, stable, and unrelated to the entry's path. */
   id: string;
   name: string;
   kind: 'directory' | 'file';
@@ -25,7 +26,7 @@ export interface Entry {
 }
 
 export type Entries = Map<string, Entry>;
-export interface FileTree { rootId: string; entries: Entries; }
+export interface FileTree { rootId: string; entries: Entries; /** True for the bundled demo tree. */ demo?: boolean; }
 export interface Point { x: number; y: number; }
 export interface Camera extends Point { scale: number; }
 export interface Settings {
