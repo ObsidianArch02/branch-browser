@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDemo, DEMO_FOCUS, entryAtPath, visibleChildren } from './data';
-import { loadDirectory, readFile, treeFromFiles } from './filesystem';
+import { createDirectorySource, readFile, sourceFromHandle, treeFromFiles } from './filesystem';
 import { initialNavigation, navigationReducer } from './navigation';
 import { buildLayout, focusBounds } from './layout';
 import type { FileTree, ReadonlyDirectoryHandle } from './types';
@@ -155,7 +155,10 @@ describe('local directories', () => {
       },
     };
     const tree: FileTree = { rootId: 'root', entries: new Map([['root', { id: 'root', name: 'root', kind: 'directory', handle }]]) };
-    const [loaded] = await Promise.all([loadDirectory(tree, 'root'), loadDirectory(tree, 'root')]);
+    const source = createDirectorySource(tree);
+    await Promise.all([source.load('root'), source.load('root')]);
+    const loaded = source.getSnapshot();
+    await source.load('root');
     expect(reads).toBe(1);
     const childIds = loaded.entries.get('root')!.children!;
     expect(childIds).toHaveLength(1);
@@ -165,6 +168,39 @@ describe('local directories', () => {
     expect(tree.entries.get('root')!.children).toBeUndefined();
   });
 
+  it('retains both directory updates when different reads finish out of order', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    function directory(name: string, ready: Promise<void>): ReadonlyDirectoryHandle {
+      return {
+        kind: 'directory', name,
+        async *values() {
+          await ready;
+          yield { kind: 'file' as const, name: `${name}.txt`, getFile: async () => new File([], `${name}.txt`) };
+        },
+      };
+    }
+    const source = await sourceFromHandle({
+      kind: 'directory', name: 'root',
+      async *values() {
+        yield directory('slow', gate);
+        yield directory('fast', Promise.resolve());
+      },
+    });
+    const initial = source.getSnapshot();
+    const [slowId, fastId] = initial.entries.get(initial.rootId)!.children!;
+    const reading = source.load(slowId);
+    await source.load(fastId);
+    const partial = source.getSnapshot();
+    release();
+    await reading;
+
+    const complete = source.getSnapshot();
+    expect(complete.entries.get(fastId)).toBe(partial.entries.get(fastId));
+    expect(partial.entries.get(slowId)?.children).toBeUndefined();
+    expect([...complete.entries.values()].filter(entry => entry.kind === 'file').map(entry => entry.name).sort()).toEqual(['fast.txt', 'slow.txt']);
+  });
+
   it('propagates a rejected directory read and leaves the directory unloaded', async () => {
     const handle: ReadonlyDirectoryHandle = {
       kind: 'directory', name: 'root',
@@ -172,10 +208,11 @@ describe('local directories', () => {
       async *values() { throw new Error('denied'); },
     };
     const tree: FileTree = { rootId: 'root', entries: new Map([['root', { id: 'root', name: 'root', kind: 'directory', handle }]]) };
-    await expect(loadDirectory(tree, 'root')).rejects.toThrow('denied');
+    const source = createDirectorySource(tree);
+    await expect(source.load('root')).rejects.toThrow('denied');
     // The directory is still considered unloaded and the read is retried on the next call.
-    expect(tree.entries.get('root')!.children).toBeUndefined();
-    await expect(loadDirectory(tree, 'root')).rejects.toThrow('denied');
+    expect(source.getSnapshot()).toBe(tree);
+    await expect(source.load('root')).rejects.toThrow('denied');
   });
 
   it('imports a file without a webkitRelativePath under a default folder name', () => {

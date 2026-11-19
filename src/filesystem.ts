@@ -1,59 +1,58 @@
 import type { Entry, FileTree, ReadonlyDirectoryHandle } from './types';
 
-const pendingReads = new WeakMap<ReadonlyDirectoryHandle, Promise<FileTree>>();
-
 let nextId = 0;
 /** Allocate an opaque entry id. Ids are pure identifiers and never encode the entry's path. */
 export function allocateId(): string {
   return `e${nextId++}`;
 }
 
-/**
- * Ensure a directory's children are loaded. Resolves to a new FileTree whose
- * entries map contains the loaded children; the input tree is never mutated.
- * Concurrent calls for the same directory share one read and resolve to the
- * same updated tree. If a caller's tree is stale, its own fresh copy is built.
- */
-export function loadDirectory(tree: FileTree, id: string): Promise<FileTree> {
-  const entry = tree.entries.get(id);
-  if (!entry || entry.kind !== 'directory' || entry.children !== undefined) return Promise.resolve(tree);
-  const handle = entry.handle;
-  if (!handle || handle.kind !== 'directory') return Promise.resolve(tree);
+export function createDirectorySource(initialTree: FileTree) {
+  let tree = initialTree;
+  const pendingReads = new Map<string, Promise<void>>();
+  const listeners = new Set<() => void>();
 
-  const pending = pendingReads.get(handle);
-  if (pending) return pending.then(loaded => mergeLoaded(tree, loaded, id));
+  function subscribe(listener: () => void) {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  }
 
-  const read = (async (): Promise<FileTree> => {
-    const children: Entry[] = [];
-    for await (const child of handle.values()) {
-      children.push({ id: allocateId(), name: child.name, searchName: child.name.toLocaleLowerCase(), kind: child.kind, parentId: id, handle: child });
-    }
-    return mergeLoaded(tree, children, id);
-  })();
+  function load(id: string): Promise<void> {
+    const entry = tree.entries.get(id);
+    if (entry?.handle?.kind !== 'directory' || entry.children !== undefined) return Promise.resolve();
+    const handle = entry.handle;
+    const pending = pendingReads.get(id);
+    if (pending) return pending;
 
-  pendingReads.set(handle, read);
-  read.finally(() => pendingReads.delete(handle)).catch(() => undefined);
-  return read;
+    const read = (async () => {
+      const children: Entry[] = [];
+      for await (const child of handle.values()) {
+        children.push({ id: allocateId(), name: child.name, searchName: child.name.toLocaleLowerCase(), kind: child.kind, parentId: id, handle: child });
+      }
+
+      const entries = new Map(tree.entries);
+      for (const child of children) entries.set(child.id, child);
+      entries.set(id, { ...entry, children: children.map(child => child.id) });
+      tree = { ...tree, entries };
+      listeners.forEach(listener => listener());
+    })().finally(() => pendingReads.delete(id));
+    pendingReads.set(id, read);
+    return read;
+  }
+
+  return { getSnapshot: () => tree, subscribe, load };
 }
 
-/** Apply loaded children (a list or an already-built tree's entries for `id`) onto `tree`, immutably. */
-function mergeLoaded(tree: FileTree, loaded: FileTree | Entry[], id: string): FileTree {
-  const source = Array.isArray(loaded) ? undefined : loaded;
-  const children: Entry[] = Array.isArray(loaded)
-    ? loaded
-    : (source!.entries.get(id)!.children ?? []).map(childId => source!.entries.get(childId)!);
-  const entries = new Map(tree.entries);
-  const base = entries.get(id)!;
-  for (const child of children) entries.set(child.id, child);
-  entries.set(id, { ...base, children: children.map(child => child.id) });
-  return { ...tree, entries };
-}
+export type DirectorySource = ReturnType<typeof createDirectorySource>;
 
-export async function treeFromHandle(handle: ReadonlyDirectoryHandle): Promise<FileTree> {
+export async function sourceFromHandle(handle: ReadonlyDirectoryHandle): Promise<DirectorySource> {
   const rootId = allocateId();
   const tree: FileTree = { rootId, entries: new Map([[rootId, { id: rootId, name: handle.name, kind: 'directory', handle }]]) };
-  return loadDirectory(tree, rootId);
+  const source = createDirectorySource(tree);
+  await source.load(rootId);
+  return source;
 }
+
+export const errorMessage = (error: unknown) => error instanceof Error ? error.message : '读取文件夹失败';
 
 export function treeFromFiles(files: File[]): FileTree {
   const rootName = files[0]?.webkitRelativePath?.split('/')[0] || '本地文件夹';
