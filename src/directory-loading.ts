@@ -1,12 +1,11 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { ancestors, visibleChildren } from './data';
-import { errorMessage } from './filesystem';
 import type { DirectorySource } from './filesystem';
 import type { FileTree } from './types';
 
 const batchSize = 8;
 
-export function useDirectoryLoading(source: DirectorySource, activeId: string, previews: boolean, hidden: boolean, reportError: (message: string) => void) {
+export function useDirectoryLoading(source: DirectorySource, activeId: string, previews: boolean, hidden: boolean, reportError: (error: unknown) => void) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -28,7 +27,7 @@ export function useDirectoryLoading(source: DirectorySource, activeId: string, p
           await Promise.all(children.slice(i, i + batchSize).map(entry => source.load(entry.id)));
         }
       } catch (error) {
-        if (!cancelled) reportError(errorMessage(error));
+        if (!cancelled) reportError(error);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -41,7 +40,7 @@ export function useDirectoryLoading(source: DirectorySource, activeId: string, p
   return loading;
 }
 
-export function useDirectorySearch(source: DirectorySource, tree: FileTree, query: string, hidden: boolean, reportError: (message: string) => void) {
+export function useDirectorySearch(source: DirectorySource, tree: FileTree, query: string, hidden: boolean, reportError: (error: unknown) => void) {
   const [searching, setSearching] = useState(false);
   const deferredQuery = useDeferredValue(query);
   const results = useMemo(() => {
@@ -74,7 +73,7 @@ export function useDirectorySearch(source: DirectorySource, tree: FileTree, quer
           }
         }
       } catch (error) {
-        if (!cancelled) reportError(errorMessage(error));
+        if (!cancelled) reportError(error);
       } finally {
         if (!cancelled) setSearching(false);
       }

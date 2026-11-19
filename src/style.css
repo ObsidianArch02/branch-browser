@@ -65,6 +65,8 @@ input { color: #dedfe2; }
 .settings-popover { width: 245px; position: absolute; top: 40px; right: 0; padding: 16px; background: #111318; border: 1px solid #343942; border-radius: 5px; box-shadow: 0 12px 40px #0009; z-index: 40; font-size: 12px; }
 .popover-heading { color: #dde0e5; padding-bottom: 12px; border-bottom: 1px solid #292d35; margin-bottom: 10px; }
 .settings-view-switch { display: none; }
+.setting-language { display: flex; align-items: center; justify-content: space-between; min-height: 35px; }
+.setting-language select { color: #dde0e5; background: #22262d; border: 1px solid #363b44; border-radius: 4px; padding: 4px 6px; color-scheme: dark; }
 .setting-toggle { display: flex; align-items: center; height: 35px; cursor: pointer; position: relative; }
 .setting-toggle > span:first-child { flex: 1; }
 .setting-toggle input { position: absolute; width: 31px; height: 17px; right: 0; opacity: 0; cursor: pointer; }
@@ -88,8 +90,9 @@ input { color: #dedfe2; }
 .workspace-label-divider { padding: 0 2px; color: #3c424c; }
 .source-dot { display: inline-block; width: 5px; height: 5px; background: #87bda2; border-radius: 50%; }
 .demo-dot { background: #b7915d; }
-.graph-scene { position: absolute; top: 0; left: 0; width: 1px; height: 1px; transform-origin: 0 0; transition: transform .32s cubic-bezier(.22,.75,.24,1); will-change: transform; }
-.graph-scene.instant { transition: none; }
+.graph-scene { position: absolute; width: 1px; height: 1px; transition: left .32s cubic-bezier(.22,.75,.24,1), top .32s cubic-bezier(.22,.75,.24,1); }
+.graph-surface { position: absolute; top: 0; left: 0; width: 1px; height: 1px; transition: zoom .32s cubic-bezier(.22,.75,.24,1); }
+.graph-scene.instant, .graph-scene.instant .graph-surface { transition: none; }
 .connections { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
 .connections path { fill: none; stroke: #7899d8; stroke-width: 1.3; stroke-opacity: .83; vector-effect: non-scaling-stroke; transition: d .32s cubic-bezier(.22,.75,.24,1), stroke .2s; }
 .connections path.path-connection { stroke: #c58d55; stroke-opacity: .95; }

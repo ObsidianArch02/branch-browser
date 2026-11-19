@@ -52,10 +52,8 @@ export async function sourceFromHandle(handle: ReadonlyDirectoryHandle): Promise
   return source;
 }
 
-export const errorMessage = (error: unknown) => error instanceof Error ? error.message : '读取文件夹失败';
-
-export function treeFromFiles(files: File[]): FileTree {
-  const rootName = files[0]?.webkitRelativePath?.split('/')[0] || '本地文件夹';
+export function treeFromFiles(files: File[], fallbackName = 'Local folder'): FileTree {
+  const rootName = files[0]?.webkitRelativePath?.split('/')[0] || fallbackName;
   const rootId = allocateId();
   const entries = new Map<string, Entry>([[rootId, { id: rootId, name: rootName, kind: 'directory', children: [] }]]);
   // Key intermediate directories by their path so files sharing a directory land
@@ -94,7 +92,7 @@ export async function readFile(entry: Entry): Promise<{ file?: File; entry?: Ent
   }
   if (entry.asset) {
     const response = await fetch(entry.asset);
-    if (!response.ok) throw new Error('预览资源读取失败');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     return { file: new File([blob], entry.name, { type: blob.type }) };
   }

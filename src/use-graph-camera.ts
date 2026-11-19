@@ -105,9 +105,13 @@ export function useGraphCamera({ tree, activeId, selectedId, previewId, settings
     const point = { x: event.clientX, y: event.clientY };
     pointerPositions.current.set(event.pointerId, point);
     event.currentTarget.setPointerCapture(event.pointerId);
-    const scene = event.currentTarget.querySelector('.graph-scene');
-    const transform = scene ? new DOMMatrixReadOnly(getComputedStyle(scene).transform) : undefined;
-    const visibleCamera = transform ? { x: transform.m41, y: transform.m42, scale: transform.a } : cameraRef.current;
+    const surface = event.currentTarget.querySelector('.graph-surface');
+    let visibleCamera = cameraRef.current;
+    if (surface) {
+      const bounds = surface.getBoundingClientRect();
+      const canvas = event.currentTarget.getBoundingClientRect();
+      visibleCamera = { x: bounds.left - canvas.left, y: bounds.top - canvas.top, scale: Number(getComputedStyle(surface).zoom) };
+    }
     setCamera(visibleCamera);
     cameraRef.current = visibleCamera;
     setAutoCenter(false);

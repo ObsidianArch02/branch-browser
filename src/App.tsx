@@ -4,9 +4,10 @@ import { ArrowLeft, ArrowRight, Check, ChevronRight, Database, Eye, EyeOff, File
 import { ancestors, createDemo, DEMO_FOCUS, visibleChildren } from './data';
 import { useDirectoryLoading, useDirectorySearch } from './directory-loading';
 import { FileList } from './file-list';
-import { createDirectorySource, errorMessage, sourceFromHandle, treeFromFiles } from './filesystem';
+import { createDirectorySource, sourceFromHandle, treeFromFiles } from './filesystem';
 import type { DirectorySource } from './filesystem';
 import { GraphView } from './graph-view';
+import { errorMessage, messages, readLocale, saveLocale } from './i18n';
 import { IconButton } from './icon-button';
 import { initialNavigation, navigationReducer } from './navigation';
 import { useGraphCamera } from './use-graph-camera';
@@ -20,6 +21,8 @@ export default function App() {
   const tree = useSyncExternalStore(source.subscribe, source.getSnapshot);
   const [nav, dispatch] = useReducer(navigationReducer, tree, t => initialNavigation(t, DEMO_FOCUS, demoSelection));
   const { activeId, selectedId, previewId, history: navigation } = nav;
+  const [locale, setLocale] = useState(readLocale);
+  const text = messages[locale];
   const [settings, setSettings] = useState(initialSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<'graph' | 'list'>('graph');
@@ -29,7 +32,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchIndex, setSearchIndex] = useState(0);
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState<{ error: unknown }>();
   const fileInput = useRef<HTMLInputElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -39,9 +42,16 @@ export default function App() {
   const cancelSelection = useCallback(() => { window.clearTimeout(selectionTimer.current); selectionTimer.current = undefined; }, []);
   useEffect(() => cancelSelection, [source, activeId, view, settingsOpen, cancelSelection]);
 
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.title = text.title;
+    saveLocale(locale);
+  }, [locale, text.title]);
+
   const { graph, camera, viewport, canvasRef, dragging, wheelZooming, setAutoCenter, fit, zoom, resetZoom, pointerDown, pointerMove, pointerUp } = useGraphCamera({ tree, activeId, selectedId, previewId, settings, descending, graphVisible: view === 'graph', cancelSelection });
-  const loading = useDirectoryLoading(source, activeId, settings.previews, settings.hidden, setToast);
-  const { results: searchResults, searching } = useDirectorySearch(source, tree, query, settings.hidden, setToast);
+  const reportError = useCallback((error: unknown) => setToast({ error }), []);
+  const loading = useDirectoryLoading(source, activeId, settings.previews, settings.hidden, reportError);
+  const { results: searchResults, searching } = useDirectorySearch(source, tree, query, settings.hidden, reportError);
   const busy = importing || loading;
 
   const active = tree.entries.get(activeId)!;
@@ -129,7 +139,7 @@ export default function App() {
   useEffect(() => { setSearchIndex(0); }, [query]);
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(''), 6000);
+    const timer = setTimeout(() => setToast(undefined), 6000);
     return () => clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
@@ -209,7 +219,7 @@ export default function App() {
     } catch (error) {
       if (version !== importVersion.current || (error instanceof Error && error.name === 'AbortError')) return;
       if (error instanceof Error && ['SecurityError', 'NotAllowedError'].includes(error.name)) fileInput.current?.click();
-      else setToast(errorMessage(error));
+      else reportError(error);
     } finally { if (version === importVersion.current) setImporting(false); }
   }
 
@@ -218,7 +228,7 @@ export default function App() {
     if (files.length) {
       importVersion.current++;
       setImporting(false);
-      installSource(createDirectorySource(treeFromFiles(files)));
+      installSource(createDirectorySource(treeFromFiles(files, text.localFolder)));
     }
     event.target.value = '';
   }
@@ -236,32 +246,44 @@ export default function App() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><GitBranch size={19} strokeWidth={1.6} /><span>branch<span className="brand-dot">.</span></span></div>
-      <div className="history-controls"><IconButton label="后退" disabled={navigation.index === 0} onClick={() => goHistory(-1)}><ArrowLeft size={16} /></IconButton><IconButton label="前进" disabled={navigation.index === navigation.items.length - 1} onClick={() => goHistory(1)}><ArrowRight size={16} /></IconButton></div>
-      <nav className="breadcrumbs" aria-label="当前路径">{path.map((entry, index) => <span key={entry.id}>{index > 0 && <ChevronRight size={12} />}<button onClick={() => navigate(entry.id)} className={entry.id === activeId ? 'current-crumb' : ''}>{entry.name}</button></span>)}</nav>
+      <div className="history-controls"><IconButton label={text.back} disabled={navigation.index === 0} onClick={() => goHistory(-1)}><ArrowLeft size={16} /></IconButton><IconButton label={text.forward} disabled={navigation.index === navigation.items.length - 1} onClick={() => goHistory(1)}><ArrowRight size={16} /></IconButton></div>
+      <nav className="breadcrumbs" aria-label={text.currentPath}>{path.map((entry, index) => <span key={entry.id}>{index > 0 && <ChevronRight size={12} />}<button onClick={() => navigate(entry.id)} className={entry.id === activeId ? 'current-crumb' : ''}>{entry.name}</button></span>)}</nav>
       <div className="search-wrap">
         <Search size={15} />
-        <input ref={searchInput} aria-label="搜索文件" placeholder="搜索文件" value={query} onFocus={() => setSearchOpen(true)} onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node)) setSearchOpen(false); }} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onKeyDown={event => {
+        <input ref={searchInput} aria-label={text.searchFiles} placeholder={text.searchFiles} value={query} onFocus={() => setSearchOpen(true)} onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node)) setSearchOpen(false); }} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onKeyDown={event => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setSearchIndex(index => Math.max(0, Math.min(searchResults.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))); }
           else if (event.key === 'Enter' && searchResults[searchIndex]) selectSearchResult(searchResults[searchIndex]);
         }} />
-        {query && <button aria-label="清除搜索" onClick={() => { setQuery(''); searchInput.current?.focus(); }}><X size={13} /></button>}
-        {searchOpen && query.trim() && <div className="search-results" role="listbox" aria-label="搜索结果"><div className="search-results-heading">搜索结果 <span>{searching ? <LoaderCircle size={12} className="spin" /> : <>{searchResults.length}{searchResults.length === 100 ? '+' : ''}</>}</span></div>{searchResults.length ? searchResults.map((entry, index) => <button role="option" aria-selected={index === searchIndex} key={entry.id} onMouseDown={event => event.preventDefault()} onClick={() => selectSearchResult(entry)} className={index === searchIndex ? 'search-highlight' : ''}>{entry.kind === 'directory' ? <Folder size={16} /> : <File size={16} />}<span><strong>{entry.name}</strong><small>{ancestors(tree.entries, entry.parentId ?? entry.id).map(item => item.name).join(' / ')}</small></span><ChevronRight size={13} /></button>) : <div className="no-results">{searching ? '正在搜索' : '没有匹配的文件'}</div>}</div>}
+        {query && <button aria-label={text.clearSearch} onClick={() => { setQuery(''); searchInput.current?.focus(); }}><X size={13} /></button>}
+        {searchOpen && query.trim() && <div className="search-results" role="listbox" aria-label={text.searchResults}><div className="search-results-heading">{text.searchResults} <span>{searching ? <LoaderCircle size={12} className="spin" /> : <>{searchResults.length}{searchResults.length === 100 ? '+' : ''}</>}</span></div>{searchResults.length ? searchResults.map((entry, index) => <button role="option" aria-selected={index === searchIndex} key={entry.id} onMouseDown={event => event.preventDefault()} onClick={() => selectSearchResult(entry)} className={index === searchIndex ? 'search-highlight' : ''}>{entry.kind === 'directory' ? <Folder size={16} /> : <File size={16} />}<span><strong>{entry.name}</strong><small>{ancestors(tree.entries, entry.parentId ?? entry.id).map(item => item.name).join(' / ')}</small></span><ChevronRight size={13} /></button>) : <div className="no-results">{searching ? text.searching : text.noResults}</div>}</div>}
       </div>
       <div className="topbar-tools">
-        <div className="view-toggle" role="group" aria-label="视图"><IconButton label="目录图" active={view === 'graph'} onClick={() => setView('graph')}><Network size={16} /></IconButton><IconButton label="列表" active={view === 'list'} onClick={() => setView('list')}><List size={17} /></IconButton></div>
-        <button className="open-folder" aria-label="打开文件夹" title="打开文件夹" onClick={() => void openFolder()}><FolderOpen size={16} /><span>打开文件夹</span></button>
-        <div className="settings-anchor" ref={settingsRef}><IconButton label="显示设置" active={settingsOpen} onClick={() => setSettingsOpen(open => !open)}><Settings2 size={17} /></IconButton>{settingsOpen && <div className="settings-popover"><div className="popover-heading">显示设置</div><div className="settings-view-switch"><span>视图</span><div className="view-toggle" role="group" aria-label="移动端视图"><IconButton label="目录图" active={view === 'graph'} onClick={() => { setView('graph'); setSettingsOpen(false); }}><Network size={16} /></IconButton><IconButton label="列表" active={view === 'list'} onClick={() => { setView('list'); setSettingsOpen(false); }}><List size={17} /></IconButton></div></div><label className="setting-toggle"><span>子目录预览</span><input type="checkbox" checked={settings.previews} onChange={event => setSettings(old => ({ ...old, previews: event.target.checked }))} /><span className="switch" /></label><label className="setting-toggle"><span>显示隐藏文件</span><input type="checkbox" checked={settings.hidden} onChange={event => setSettings(old => ({ ...old, hidden: event.target.checked }))} /><span className="switch" /></label><label className="setting-range"><span>字号 <output>{settings.fontSize}px</output></span><input aria-label="字号" type="range" min="12" max="19" step="1" value={settings.fontSize} onChange={event => { setAutoCenter(true); setSettings(old => ({ ...old, fontSize: Number(event.target.value) })); }} /></label><label className="setting-range"><span>目录间距 <output>{settings.gap}px</output></span><input aria-label="目录间距" type="range" min="70" max="170" step="5" value={settings.gap} onChange={event => { setAutoCenter(true); setSettings(old => ({ ...old, gap: Number(event.target.value) })); }} /></label><button className="demo-command" onClick={() => { resetDemo(); setSettingsOpen(false); }}><Database size={15} />载入示例目录</button></div>}</div>
+        <div className="view-toggle" role="group" aria-label={text.view}><IconButton label={text.graph} active={view === 'graph'} onClick={() => setView('graph')}><Network size={16} /></IconButton><IconButton label={text.list} active={view === 'list'} onClick={() => setView('list')}><List size={17} /></IconButton></div>
+        <button className="open-folder" aria-label={text.openFolder} title={text.openFolder} onClick={() => void openFolder()}><FolderOpen size={16} /><span>{text.openFolder}</span></button>
+        <div className="settings-anchor" ref={settingsRef}>
+          <IconButton label={text.settings} active={settingsOpen} onClick={() => setSettingsOpen(open => !open)}><Settings2 size={17} /></IconButton>
+          {settingsOpen && <div className="settings-popover">
+            <div className="popover-heading">{text.settings}</div>
+            <div className="settings-view-switch"><span>{text.view}</span><div className="view-toggle" role="group" aria-label={text.view}><IconButton label={text.graph} active={view === 'graph'} onClick={() => { setView('graph'); setSettingsOpen(false); }}><Network size={16} /></IconButton><IconButton label={text.list} active={view === 'list'} onClick={() => { setView('list'); setSettingsOpen(false); }}><List size={17} /></IconButton></div></div>
+            <label className="setting-language"><span>{text.language}</span><select value={locale} onChange={event => setLocale(event.target.value === 'zh-CN' ? 'zh-CN' : 'en')}><option value="en" lang="en">English</option><option value="zh-CN" lang="zh-CN">简体中文</option></select></label>
+            <label className="setting-toggle"><span>{text.previews}</span><input type="checkbox" checked={settings.previews} onChange={event => setSettings(old => ({ ...old, previews: event.target.checked }))} /><span className="switch" /></label>
+            <label className="setting-toggle"><span>{text.showHidden}</span><input type="checkbox" checked={settings.hidden} onChange={event => setSettings(old => ({ ...old, hidden: event.target.checked }))} /><span className="switch" /></label>
+            <label className="setting-range"><span>{text.fontSize} <output>{settings.fontSize}px</output></span><input aria-label={text.fontSize} type="range" min="12" max="19" step="1" value={settings.fontSize} onChange={event => { setAutoCenter(true); setSettings(old => ({ ...old, fontSize: Number(event.target.value) })); }} /></label>
+            <label className="setting-range"><span>{text.directoryGap} <output>{settings.gap}px</output></span><input aria-label={text.directoryGap} type="range" min="70" max="170" step="5" value={settings.gap} onChange={event => { setAutoCenter(true); setSettings(old => ({ ...old, gap: Number(event.target.value) })); }} /></label>
+            <button className="demo-command" onClick={() => { resetDemo(); setSettingsOpen(false); }}><Database size={15} />{text.loadDemo}</button>
+          </div>}
+        </div>
       </div>
     </header>
     <div className="workspace">
-      <main className={`canvas ${dragging ? 'is-dragging' : ''} ${view === 'list' ? 'list-canvas' : ''}`} ref={canvasRef} onPointerDown={view === 'graph' ? pointerDown : undefined} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} aria-label="文件目录" tabIndex={-1}>
-        <div className="workspace-label"><span className={`source-dot ${isDemo ? 'demo-dot' : ''}`} />{isDemo ? '示例目录' : '本地目录'}<span className="workspace-label-divider">/</span><span>{active.name}</span>{busy && <LoaderCircle size={12} className="spin" />}</div>
-        {view === 'graph' ? <GraphView graph={graph} tree={tree} camera={camera} viewport={viewport} activeId={activeId} selectedId={selectedId} pathIds={pathIds} previews={settings.previews} fontSize={settings.fontSize} instant={dragging || wheelZooming} onNavigate={navigate} onClickFile={clickFile} onOpen={openEntry} onClosePreview={closePreview} onFit={fit} onZoom={zoom} onResetZoom={resetZoom} />
-          : <FileList directoryName={active.name} rows={currentRows} selectedId={selectedId} descending={descending} busy={busy} onToggleSort={() => setDescending(value => !value)} onSelect={selectEntry} onOpen={openEntry} />}
+      <main className={`canvas ${dragging ? 'is-dragging' : ''} ${view === 'list' ? 'list-canvas' : ''}`} ref={canvasRef} onPointerDown={view === 'graph' ? pointerDown : undefined} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} aria-label={text.fileBrowser} tabIndex={-1}>
+        <div className="workspace-label"><span className={`source-dot ${isDemo ? 'demo-dot' : ''}`} />{isDemo ? text.demoFolder : text.localFolder}<span className="workspace-label-divider">/</span><span>{active.name}</span>{busy && <LoaderCircle size={12} className="spin" />}</div>
+        {view === 'graph' ? <GraphView locale={locale} graph={graph} tree={tree} camera={camera} viewport={viewport} activeId={activeId} selectedId={selectedId} pathIds={pathIds} previews={settings.previews} fontSize={settings.fontSize} instant={dragging || wheelZooming} onNavigate={navigate} onClickFile={clickFile} onOpen={openEntry} onClosePreview={closePreview} onFit={fit} onZoom={zoom} onResetZoom={resetZoom} />
+          : <FileList locale={locale} directoryName={active.name} rows={currentRows} selectedId={selectedId} descending={descending} busy={busy} onToggleSort={() => setDescending(value => !value)} onSelect={selectEntry} onOpen={openEntry} />}
       </main>
     </div>
-    <footer className="statusbar"><div className="status-counts"><span>{counts.directories} 个目录</span><span>{counts.files} 个文件</span></div><span className="status-path" title={selectedPath}>{selectedPath}</span><div className="status-tools"><IconButton label={settings.hidden ? '隐藏点文件' : '显示隐藏文件'} onClick={() => setSettings(old => ({ ...old, hidden: !old.hidden }))}>{settings.hidden ? <Eye size={13} /> : <EyeOff size={13} />}</IconButton>{busy ? <LoaderCircle size={12} className="spin" /> : <Check size={12} />}<span>{busy ? '读取中' : '就绪'}</span></div></footer>
-    <input ref={fileInput} type="file" multiple {...{ webkitdirectory: '', directory: '' }} className="folder-input" aria-label="选择本地文件夹" onChange={importFiles} />
-    {toast && <div className="toast" role="alert"><span>{toast}</span><button aria-label="关闭通知" onClick={() => setToast('')}><X size={14} /></button></div>}
+    <footer className="statusbar"><div className="status-counts"><span>{text.directories(counts.directories)}</span><span>{text.files(counts.files)}</span></div><span className="status-path" title={selectedPath}>{selectedPath}</span><div className="status-tools"><IconButton label={settings.hidden ? text.hideHidden : text.showHidden} onClick={() => setSettings(old => ({ ...old, hidden: !old.hidden }))}>{settings.hidden ? <Eye size={13} /> : <EyeOff size={13} />}</IconButton>{busy ? <LoaderCircle size={12} className="spin" /> : <Check size={12} />}<span>{busy ? text.loading : text.ready}</span></div></footer>
+    <input ref={fileInput} type="file" multiple {...{ webkitdirectory: '', directory: '' }} className="folder-input" aria-label={text.chooseFolder} onChange={importFiles} />
+    {toast && <div className="toast" role="alert"><span>{errorMessage(toast.error, text.folderReadFailed)}</span><button aria-label={text.closeNotification} onClick={() => setToast(undefined)}><X size={14} /></button></div>}
   </div>;
 }

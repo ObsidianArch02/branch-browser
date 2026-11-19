@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createDemo, DEMO_FOCUS, entryAtPath, visibleChildren } from './data';
+import { createDemo, DEMO_FOCUS, entryAtPath, fileType, visibleChildren } from './data';
 import { createDirectorySource, readFile, sourceFromHandle, treeFromFiles } from './filesystem';
+import { messages } from './i18n';
 import { initialNavigation, navigationReducer } from './navigation';
 import { buildLayout, focusBounds } from './layout';
 import type { FileTree, ReadonlyDirectoryHandle } from './types';
@@ -14,6 +15,17 @@ function atPath(tree: FileTree, path: string): string {
   return entry.id;
 }
 const focusId = (tree: FileTree) => atPath(tree, DEMO_FOCUS);
+
+describe('localization', () => {
+  it('formats counts and file types in the selected language', () => {
+    const file = { id: 'file', kind: 'file', name: 'notes.txt' } as const;
+    expect(messages.en.files(1)).toBe('1 file');
+    expect(messages.en.directories(1200)).toBe('1,200 directories');
+    expect(messages['zh-CN'].files(1)).toBe('1 个文件');
+    expect(fileType(file, 'en')).toBe('TXT file');
+    expect(fileType(file, 'zh-CN')).toBe('TXT 文件');
+  });
+});
 
 describe('directory graph', () => {
   it('keeps variable-height sibling previews apart at every font size', () => {
@@ -219,7 +231,7 @@ describe('local directories', () => {
     const file = new File(['data'], 'loose.txt', { type: 'text/plain' });
     const tree = treeFromFiles([file]);
     const root = tree.entries.get(tree.rootId)!;
-    expect(root.name).toBe('本地文件夹');
+    expect(root.name).toBe('Local folder');
     expect(root.children).toHaveLength(1);
     const entry = tree.entries.get(root.children![0])!;
     expect(entry.name).toBe('loose.txt');

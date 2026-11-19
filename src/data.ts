@@ -1,4 +1,6 @@
 import { allocateId } from './filesystem';
+import { messages } from './i18n';
+import type { Locale } from './i18n';
 import type { Entries, Entry, FileTree } from './types';
 
 type Seed = { name: string; children?: Seed[]; content?: string; asset?: string };
@@ -102,15 +104,17 @@ export function visibleChildren(entries: Entries, entry: Entry, hidden: boolean,
   return result.sort((a, b) => (descending ? -1 : 1) * a.name.localeCompare(b.name, 'en', { numeric: true, sensitivity: 'base' }));
 }
 
-export function formatSize(size?: number): string {
+export function formatSize(size: number | undefined, locale: Locale): string {
   if (size === undefined) return '--';
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 ** 2) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 ** 2).toFixed(1)} MB`;
+  if (size < 1024) return `${size.toLocaleString(locale)} B`;
+  const unit = size < 1024 ** 2 ? 'KB' : 'MB';
+  const value = size / (unit === 'KB' ? 1024 : 1024 ** 2);
+  return `${value.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${unit}`;
 }
 
-export function fileType(entry: Entry): string {
-  if (entry.kind === 'directory') return '文件夹';
+export function fileType(entry: Entry, locale: Locale): string {
+  const text = messages[locale];
+  if (entry.kind === 'directory') return text.folder;
   const extension = entry.name.split('.').pop()?.toUpperCase();
-  return extension && extension !== entry.name.toUpperCase() ? `${extension} 文件` : '文件';
+  return extension && extension !== entry.name.toUpperCase() ? text.fileType(extension) : text.file;
 }
